@@ -5,3 +5,4 @@ Button "Next Map" changes the map.
 
 Notes:
 Path finding utilizes A* algorithm.
+If the EXE does not work, it may need to be recomplied
