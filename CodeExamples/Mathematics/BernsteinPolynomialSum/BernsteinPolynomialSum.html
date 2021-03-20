@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset = "UTF-8">
+
+    <!-- dont know why i need this since am not downloading it, doesnt work without it -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/chartist.js/latest/chartist.min.css">
+    <!-- use the script -->
+    <script src="chartist.min.js"></script>
+    <script src="chartist.js"></script>
+</head>
+
+<body>
+
+<h2>MAT300 Project1</h2>
+<h4>De Casteljau Algorithm for Polynomial Functions</h4>
+
+<!-- create a class, ct-perfect-second is size i think -->
+<div id="chartArea" class="Coefchart"></div>
+
+<input type="button" onclick="AddDimension()" value="Add Dimension" />
+<input type="button" onclick="RemoveDimension()" value="Remove Dimension" />
+
+<form onchange="Type()">
+  <select id="algoType">
+    <option value="NLI">NLI</option>
+    <option value="BB">BB</option>
+  </select>
+</form>
+
+<!--<input type="button" onclick="Input()" value="Take Input" /> -->
+
+<legend style="background:#1F497D; color:#fff; padding:5px 10px; font-size:22px; border-radius:10px; margin-left:10px; margin-top:10px; box-shadow:0 0 0 5px #ddd">coefficients</legend>
+
+<table id="textbox">
+  <tr>
+  </tr>
+</table>
+
+<style>
+  .ct-series-a .ct-point 
+  {
+    stroke: blue;
+  }
+
+  .ct-series-a .ct-line
+  {
+    stroke: none;
+  }
+  
+  .ct-series-b .ct-point 
+  {
+    stroke: none;
+  }
+</style>
+
+<script>
+var coeff = [];
+
+var curve = [];
+
+var data = 
+{
+  series: [coeff, curve]
+};
+
+var graph;
+var dimensions = 0;
+var arr = ['a0','a1','a2','a3','a4','a5','a6','a7','a8','a9','a10','a11','a12','a13','a14','a15','a16','a17','a18','a19','a20'];
+
+var chartWidth = 500;
+var chartHeight = 400;
+
+var type = "NLI";
+
+function Type()
+{
+  var select = document.getElementById("algoType");
+  type = select.options[select.selectedIndex].value;
+
+  CalculateCurve();
+
+  data = 
+  { 
+    series: [coeff, curve] 
+  };
+
+  graph.update(data);
+}
+
+function init()
+{
+  //query, data, options, responsive options
+  //query must be the same name as created class
+  graph = new Chartist.Line('.Coefchart', data, 
+  {
+    axisX: {
+      type: Chartist.FixedScaleAxis,
+      ticks: [0, 1],
+      low: 0,
+      high: 1
+    },
+
+    axisY: {
+      type: Chartist.FixedScaleAxis,
+      ticks: [-3, -2, -1, 0, 1, 2, 3],
+      low: -3,
+      high: 3
+    },
+
+    showPoint: true,
+    width: chartWidth,
+    height: chartHeight
+  });
+
+  var select = document.getElementById("algoType");
+  type = select.options[select.selectedIndex].value;
+}
+
+function AddDimension()
+{
+  if(dimensions > 20)
+  {
+    return;
+  }
+
+  var table = document.getElementById("textbox");
+  var rowlen = table.rows.length;
+  var row = table.insertRow(rowlen);
+  row.id = rowlen;
+
+  var x = row.insertCell(0)
+    
+  x.innerHTML = "<label>" + arr[dimensions] + ":</label><input type='number' step='0.1' min='-3' max='3' onchange='Input()'' id="+ arr[dimensions] + " name='" + arr[dimensions] + "' value = 1.0>"
+
+  dimensions = dimensions + 1;
+
+  updateChart();
+}
+
+function RemoveDimension()
+{
+  if(dimensions <= 2)
+  {
+    return;
+  }
+
+  var table = document.getElementById("textbox");
+  table.deleteRow(dimensions);
+
+  dimensions = dimensions - 1;
+
+  updateChart();
+}
+
+function updateChart()
+{
+  coeff = [];
+
+  var diff = 1 / (dimensions - 1);
+
+  for (var i = 0; i < dimensions; i++) 
+  {
+    coeff.push({x: diff * i, y: 1});
+
+    var row = document.getElementById(arr[i]);
+    var val = row.value = '1.0';
+  }
+
+  CalculateCurve();
+
+  data = 
+  { 
+    series: [coeff, curve] 
+  };
+
+  graph.update(data);
+}
+
+function CalculateCurve()
+{
+  curve = [];
+
+  var points = 100;
+
+  var step = 1 / points;
+  for (var i = 0; i <= points; i++) 
+  {
+    var val = 0;
+
+    if(type == "BB")
+    {
+      val = BinomialBernstein(step * i);
+    }
+    else
+    {
+      val = NestedLinearInterpolation(step * i);
+    }
+
+    curve.push({x: step * i, y: val});
+  }
+}
+
+function NestedLinearInterpolation(x)
+{
+  var currCoef = coeff.concat();
+
+  var len = currCoef.length;
+
+  while(len != 1)
+  {
+    var temp = [];
+
+    for (var i = 0; i < (len - 1); i++)
+    {
+      var val = ((1.0 - x) * currCoef[i].y) + (x * currCoef[i + 1].y);
+
+      temp.push({x:currCoef[i].x, y:val});
+    }
+
+    len--;
+    currCoef = temp;
+  }
+
+  return currCoef[0].y;
+}
+
+function BinomialBernstein(x)
+{
+  var val = 0;
+
+  for (var i = 0; i < dimensions; i++)
+  {
+    var curr = coeff[i].y * Choose(dimensions - 1 , i);
+    curr = curr * Math.pow(1 - x, dimensions - 1 - i);
+    curr = curr * Math.pow(x, i);
+
+    val = val + curr;
+  }
+
+  return val;
+}
+
+function Input()
+{
+  var table = document.getElementById("textbox");
+
+  for (var i = 0; i < dimensions; i++) 
+  {
+    var row = document.getElementById(arr[i]);
+    var val = Number(row.value);
+
+    if(val > 3.0)
+    {
+      val = 3.0;
+      row.value = '3.0';
+    }
+    if(val < -3.0)
+    {
+      val = -3.0;
+      row.value = '-3.0';
+    }
+
+    coeff[i].y = val;
+  }
+
+  CalculateCurve();
+
+  data = 
+  { 
+    series: [coeff, curve] 
+  };
+
+  graph.update(data);
+
+  //get mouse position
+  //var e = window.event;
+  //var posX = e.clientX;
+  //var posY = e.clientY;
+  //console.log(posX, posY);
+
+  //var rect = chartArea.getBoundingClientRect();
+  //console.log("Top: " + rect.top);
+  //console.log("Right: " + rect.right);  
+  //console.log("Bottom: " + rect.bottom);  
+  //console.log("Left: " + rect.left);
+}
+
+function factorial(n)
+{
+  var val = 1;
+
+  for (var i = n; i >= 1; i--) 
+  {
+    val = val * i;
+  }
+
+  return val;
+}
+
+function Choose(a, b)
+{
+  return (factorial(a) / (factorial(a - b) * factorial(b)));
+}
+
+init();
+AddDimension();
+AddDimension();
+
+</script>
+
+</body>
+</html> 

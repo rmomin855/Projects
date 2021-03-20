@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset = "UTF-8">
+  <style>
+    body 
+    {
+      background-color: #000000;
+    }
+  </style>
+</head>
+<body>
+<canvas id="canvas" width="600" height="400" onclick="MouseInput()" onmouseup="MouseUp()" onmousedown="MouseDown()" onmousemove="MouseDrag()"></canvas>
+
+<script>
+  var spaceX = 20;
+  var spaceY = 10;
+  var width = 600;
+  var height = 400;
+  var pointSize = 10;
+  var points = [];
+  var curve = [];
+
+  var mouseDown = false;
+
+  function Point(canvasX, canvasY) 
+  {
+    this.x = canvasX;
+    this.y = canvasY;
+  }
+
+  function MouseDown()
+  {
+    mouseDown = true;
+  }
+
+  function MouseUp()
+  {
+    mouseDown = false;
+  }
+
+  function MouseDrag()
+  {
+    if(mouseDown)
+    {
+      var x = event.clientX;
+      var y = event.clientY;
+
+      if(x > (width - spaceX) || y > (height - spaceY) || x < spaceX || y < spaceY)
+      {
+        return;
+      }
+
+      x -= pointSize;
+      y -= pointSize;
+
+      if(CollidedWithPoint(x, y))
+      {
+        CalculateCurve();
+        ReDraw();
+      }
+    }
+  }
+
+  function MouseInput()
+  {
+    var x = event.clientX;
+    var y = event.clientY;
+
+    if(x > (width - spaceX) || y > (height - spaceY) || x < spaceX || y < spaceY)
+    {
+      return;
+    }
+
+    x -= pointSize;
+    y -= pointSize;
+
+    if(!CollidedWithPoint(x, y))
+    {
+      var point = new Point(x, y);
+      points.push(point);
+    }
+
+    CalculateCurve();
+    ReDraw();
+  }
+
+  function CollidedWithPoint(x, y)
+  {
+    let collided = false;
+
+    for (var i = 0; i < points.length; i++)
+    {
+      let dx = points[i].x - x;
+      let dy = points[i].y - y;
+
+      if(((dx*dx) + (dy*dy)) <= (pointSize*pointSize))
+      {
+        collided = true;
+
+        points[i].x = x;
+        points[i].y = y;
+        break;
+      }
+    }
+
+    return collided;
+  }
+
+  function ReDraw()
+  {
+    ClearCanvas();
+    DrawCurve();
+    DrawAllPoints();
+  }
+
+  function ClearCanvas()
+  {
+    var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+
+    ctx.clearRect(0, 0, width, height);
+
+    ctx.beginPath();
+    ctx.strokeStyle = "#FFFFFF";
+    ctx.lineWidth = 1;
+
+    ctx.moveTo(spaceX, spaceY);
+    ctx.lineTo(spaceX, height - spaceY - pointSize);
+
+    ctx.moveTo(spaceX, spaceY);
+    ctx.lineTo(width - spaceX - pointSize, spaceY);
+
+    ctx.moveTo(width - spaceX - pointSize, height - spaceY - pointSize);
+    ctx.lineTo(width - spaceX - pointSize, spaceY);
+
+    ctx.moveTo(width - spaceX - pointSize, height - spaceY - pointSize);
+    ctx.lineTo(spaceX, height - spaceY - pointSize);
+
+    ctx.stroke();
+  }
+
+  function DrawAllPoints()
+  {
+    var size = points.length;
+
+    for (var i = size - 1; i >= 0; i--) 
+    {
+      DrawPoint(points[i].x, points[i].y, "#FF0000");
+    }
+  }
+
+  function DrawPoint(x, y, colour)
+  {
+    var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+
+    ctx.fillStyle = colour
+    ctx.beginPath();
+    ctx.arc(x, y, pointSize, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+
+  function DrawCurve()
+  {
+    var size = curve.length;
+
+    var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+
+    ctx.beginPath();
+    ctx.strokeStyle = "#0000FF";
+    ctx.lineWidth = 3;
+    ctx.setLineDash([0 , 0]);
+
+    for (var i = 0; i < size-1; i++) 
+    {
+      ctx.moveTo(curve[i].x, curve[i].y);
+      ctx.lineTo(curve[i + 1].x, curve[i + 1].y);
+    }
+
+    ctx.stroke();
+  }
+
+  function CalculateCurve()
+  {
+    if(points.length < 2)
+    {
+      return;
+    }
+
+    let numPoints = 20;
+    let numIntervals = numPoints * (points.length - 1);
+    let step = 1 / numPoints;
+    curve = [];
+
+    for (let i = 0; i <= numIntervals; i++)
+    {
+      let t = i * step;
+      let val = DividedDifference(t);
+      curve.push(val);
+    }
+  }
+
+  function DividedDifference(t)
+  {
+    let val = { x: 0, y: 0 };
+
+    for (let i = 0; i < points.length; i++)
+    {
+      let newton = NewtonInterpolation(0, i);
+
+      for (let j = 1; j <= i; j++)
+      {
+        newton.x = newton.x * (t - (j-1));
+        newton.y = newton.y * (t - (j-1));
+      }
+
+      val.x += newton.x;
+      val.y += newton.y;
+    }
+
+    return val;
+  }
+
+  function NewtonInterpolation(start, end)
+  {
+    if(start == end)
+    {
+      return { x: points[start].x, y: points[start].y };
+    }
+
+    let leftAdvance = NewtonInterpolation(start + 1, end);
+    let rightAdvance = NewtonInterpolation(start, end - 1);
+
+    let num = { x: leftAdvance.x - rightAdvance.x, y: leftAdvance.y - rightAdvance.y };
+    let dem = end - start;
+
+    return { x: num.x / dem, y: num.y / dem };
+  }
+
+  ClearCanvas();
+
+</script>
+</body>
+</html> 

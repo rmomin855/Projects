@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset = "UTF-8">
+  <style>
+    body 
+    {
+      background-color: #000000;
+    }
+  </style>
+</head>
+<body>
+<canvas id="canvas" width="600" height="400" onclick="MouseInput()" onmouseup="MouseUp()" onmousedown="MouseDown()" onmousemove="MouseDrag()"></canvas>
+
+<form onchange="TypeChange()">
+  <select id="algoType">
+    <option value="NLI">NLI</option>
+    <option value="BB">BB</option>
+    <option value="MidPoint">MidPoint</option>
+  </select>
+</form>
+
+<div oninput="TypeChange()" class="slidecontainer"><input type="range" min="0" max="100" value="50" class="slider" id="t-slider"></div>>
+
+<script>
+  var spaceX = 20;
+  var spaceY = 10;
+  var width = 600;
+  var height = 400;
+  var gridWidth = width - (2 * spaceX);
+  var gridHeight = height - (2 * spaceY);
+  var pointSize = 10;
+  var points = [];
+  var curve = [];
+
+  var type = "NLI";
+  var NLI_t = 0.5;
+  var NLIPoint = {};
+  var NLILines = [];
+  var mouseDown = false;
+
+  function Point(canvasX, canvasY) 
+  {
+    this.canvasX = canvasX;
+    this.canvasY = canvasY;
+    this.x = (canvasX - spaceX) / gridWidth;
+    this.y = (canvasY - spaceY) / gridHeight;
+    this.y *= -6.0;
+    this.y += 3.0;
+  }
+
+  function MouseDown()
+  {
+    mouseDown = true;
+  }
+
+  function MouseUp()
+  {
+    mouseDown = false;
+  }
+
+  function MouseDrag()
+  {
+    if(mouseDown)
+    {
+      var x = event.clientX;
+      var y = event.clientY;
+
+      if(x > (width - spaceX) || y > (height - spaceY) || x < spaceX || y < spaceY)
+      {
+        return;
+      }
+
+      x -= pointSize;
+      y -= pointSize;
+
+      if(CollidedWithPoint(x, y))
+      {
+        CalculateCurve();
+        ReDraw();
+      }
+    }
+  }
+
+  function MouseInput()
+  {
+    var x = event.clientX;
+    var y = event.clientY;
+
+    if(x > (width - spaceX) || y > (height - spaceY) || x < spaceX || y < spaceY)
+    {
+      return;
+    }
+
+    x -= pointSize;
+    y -= pointSize;
+
+    if(!CollidedWithPoint(x, y))
+    {
+      var point = new Point(x, y);
+      points.push(point);
+    }
+
+    CalculateCurve();
+    ReDraw();
+  }
+
+  function CollidedWithPoint(x, y)
+  {
+    let collided = false;
+
+    for (var i = 0; i < points.length; i++)
+    {
+      let dx = points[i].canvasX - x;
+      let dy = points[i].canvasY - y;
+
+      if(((dx*dx) + (dy*dy)) <= (pointSize*pointSize))
+      {
+        collided = true;
+
+        points[i].canvasX = x;
+        points[i].canvasY = y;
+
+        points[i].x = (points[i].canvasX - spaceX) / gridWidth;
+        points[i].y = (points[i].canvasY - spaceY) / gridHeight;
+        points[i].y *= -6.0;
+        points[i].y += 3.0;
+
+        break;
+      }
+    }
+
+    return collided;
+  }
+
+  function TypeChange()
+  {
+    var select = document.getElementById("algoType");
+    type = select.options[select.selectedIndex].value;
+
+    var slider = document.getElementById("t-slider");
+    NLI_t = slider.value / 100;
+
+    CalculateCurve();
+    ReDraw();
+  }
+
+  function DrawControlLines()
+  {
+    var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+
+    ctx.beginPath();
+    ctx.strokeStyle = "#FF00FF";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5 , 3]);
+
+    for (var i = 0; i < points.length - 1; i++) 
+    {
+      ctx.moveTo(points[i].canvasX, points[i].canvasY);
+      ctx.lineTo(points[i + 1].canvasX, points[i + 1].canvasY);
+    }
+
+    ctx.stroke();
+  }
+
+  function ReDraw()
+  {
+    ClearCanvas();
+    DrawGrid();
+    DrawControlLines();
+    DrawCurve();
+    DrawAllPoints();
+
+    if(type == "NLI")
+    {
+      DrawNLI();
+    }
+  }
+
+  function ClearCanvas()
+  {
+    var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+
+    ctx.clearRect(0, 0, width, height);
+  }
+
+  function DrawGrid()
+  {
+    var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+
+    ctx.beginPath();
+    ctx.strokeStyle = "#FFFFFF";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([0 , 0]);
+
+    ctx.font = "14px Arial";
+
+    ctx.moveTo(spaceX, spaceY);
+    ctx.lineTo(spaceX, height - spaceY);
+
+    var diff = gridHeight / 6;
+    var number = 3;
+    for (var i = 0; i <= 6; i++) 
+    {
+      ctx.moveTo(spaceX, spaceY + (diff * i));
+      ctx.lineTo(width - spaceX, spaceY + (diff * i));
+
+      if(number == 0)
+      {
+        ctx.strokeText(1, width - spaceX + 2, spaceY + (diff * i));
+      }
+
+      ctx.strokeText(number, 0, spaceY + (diff * i));
+      number -= 1;
+    }
+
+    ctx.stroke();
+  }
+
+  function DrawAllPoints()
+  {
+    var size = points.length;
+
+    for (var i = size - 1; i >= 0; i--) 
+    {
+      DrawPoint(points[i].canvasX, points[i].canvasY, "#FF0000");
+    }
+  }
+
+  function DrawPoint(x, y, colour)
+  {
+    var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+
+    ctx.fillStyle = colour
+    ctx.beginPath();
+    ctx.arc(x, y, pointSize, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+
+  function DrawCurve()
+  {
+    var size = curve.length;
+
+    var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+
+    for (var i = 0; i < size; i++)
+    {
+      curve[i] = ConvertToCanvasSpace(curve[i]);
+    }
+
+    ctx.beginPath();
+    ctx.strokeStyle = "#0000FF";
+    ctx.lineWidth = 3;
+    ctx.setLineDash([0 , 0]);
+
+    for (var i = 0; i < size-1; i++) 
+    {
+      ctx.moveTo(curve[i].x, curve[i].y);
+      ctx.lineTo(curve[i + 1].x, curve[i + 1].y);
+    }
+
+    ctx.stroke();
+  }
+
+  function DrawNLI()
+  {
+    DrawPoint(NLIPoint.x, NLIPoint.y, "#00FF00");
+
+    var size = NLILines.length;
+
+    if(size < 2)
+    {
+      return;
+    }
+
+    var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+
+    ctx.beginPath();
+    ctx.strokeStyle = "#00FF00";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5 , 3]);
+
+    for (var i = 0; i < size; i++) 
+    {
+      var p1 = {x:NLILines[i].p1.x, y:NLILines[i].p1.y};
+      var p2 = {x:NLILines[i].p2.x, y:NLILines[i].p2.y};
+
+      p1 = ConvertToCanvasSpace(p1);
+      p2 = ConvertToCanvasSpace(p2);
+
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+    }
+
+    ctx.stroke();
+  }
+
+  function CalculateCurve()
+  {
+    if(points.length < 2)
+    {
+      return;
+    }
+
+    var numPoints = 100;
+    var step = 1 / numPoints;
+
+    curve = []
+
+    if(type == "MidPoint")
+    {
+      curve = MidpointSubDiv(points, 2);
+    }
+    else
+    {
+      for (var i = 0; i <= numPoints; i++) 
+      {
+        var val = { x:0.0, y:0.0 };
+
+        if(type == "NLI")
+        {
+          val = NestedLinearInterpolation(step * i);
+        }
+        else if(type == "BB")
+        {
+          val = BinomialBernstein(step * i);
+        }
+
+        curve.push(val);
+      }
+    }
+  }
+
+  function ConvertToCanvasSpace(point)
+  {
+    point.x *= gridWidth;
+    point.x += spaceX;
+
+    point.y -= 3.0;
+    point.y /= -6.0;
+    point.y *= gridHeight;
+    point.y += spaceY;
+
+    return point;
+  }
+
+  function NestedLinearInterpolation(t)
+  {
+    var currCoef = points.concat();
+
+    var len = currCoef.length;
+
+    if(t == NLI_t)
+    {
+      NLILines = [];
+    }
+
+    while(len != 1)
+    {
+      var temp = [];
+
+      for (var i = 0; i < (len - 1); i++)
+      {
+        var valX = ((1.0 - t) * currCoef[i].x) + (t * currCoef[i + 1].x);
+        var valY = ((1.0 - t) * currCoef[i].y) + (t * currCoef[i + 1].y);
+
+        temp.push({canvasX:0, canvasY:0, x:valX, y:valY});
+
+        if(t == NLI_t)
+        {
+          NLILines.push({p1:currCoef[i], p2:currCoef[i + 1]});
+        }
+      }
+
+      len--;
+      currCoef = temp;
+    }
+
+    if(t == NLI_t)
+    {
+      NLIPoint = {x: currCoef[0].x, y:currCoef[0].y};
+      NLIPoint = ConvertToCanvasSpace(NLIPoint);
+    }
+
+    return {x: currCoef[0].x, y:currCoef[0].y};
+  }
+
+  function BinomialBernstein(t)
+  {
+    var valX = 0;
+    var valY = 0;
+
+    var dimensions = points.length;
+
+    for (var i = 0; i < dimensions; i++)
+    {
+      var currX = points[i].x * Choose(dimensions - 1 , i);
+      currX = currX * Math.pow(1 - t, dimensions - 1 - i);
+      currX = currX * Math.pow(t, i);
+
+      var currY = points[i].y * Choose(dimensions - 1 , i);
+      currY = currY * Math.pow(1 - t, dimensions - 1 - i);
+      currY = currY * Math.pow(t, i);
+
+      valX = valX + currX;
+      valY = valY + currY;
+    }
+
+    return {x: valX, y:valY};
+  }
+
+  function MidpointSubDiv(pointsArr, level)
+  {
+    let len = pointsArr.length;
+
+    if(level == 0 || len == 1)
+    {
+      return pointsArr;
+    }
+
+    let array1 = [];
+    let array2 = [];
+
+    let currCoef = pointsArr.concat();
+
+    while(len != 1)
+    {
+      let temp = [];
+
+      for (let i = 0; i < len - 1; i++) 
+      {
+        let valX = (currCoef[i].x + currCoef[i + 1].x) / 2;
+        let valY = (currCoef[i].y + currCoef[i + 1].y) / 2;
+
+        temp.push({x:valX, y:valY});
+
+        if(i == 0)
+        {
+          let p = {x:currCoef[i].x, y:currCoef[i].y};
+          array1.push(p);
+        }
+        if(i == len - 2)
+        {
+          let p = {x:currCoef[i + 1].x, y:currCoef[i + 1].y};
+          array2.push(p);
+        }
+      }
+
+      len--;
+      currCoef = temp;
+    }
+
+    array1.push({x:currCoef[0].x, y:currCoef[0].y});
+    array2.push({x:currCoef[0].x, y:currCoef[0].y});
+
+    array2 = array2.reverse();
+
+    return MidpointSubDiv(array1, level -1).concat(MidpointSubDiv(array2, level -1));
+  }
+
+  function factorial(n)
+  {
+    var val = 1;
+
+    for (var i = n; i >= 1; i--) 
+    {
+      val = val * i;
+    }
+
+    return val;
+  }
+
+  function Choose(a, b)
+  {
+    return (factorial(a) / (factorial(a - b) * factorial(b)));
+  }
+
+  DrawGrid();
+</script>
+</body>
+</html> 
