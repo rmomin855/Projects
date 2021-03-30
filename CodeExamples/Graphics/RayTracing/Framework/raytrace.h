@@ -19,21 +19,46 @@ class Material
 public:
   Vector3f Kd, Ks;
   float alpha;
+  float Pd, Pr, S;
   unsigned int texid;
 
   virtual bool isLight() { return false; }
 
-  Material() : Kd(Vector3f(1.0, 0.5, 0.0)), Ks(Vector3f(1, 1, 1)), alpha(1.0), texid(0) {}
+  Material() : Kd(Vector3f(1.0, 0.5, 0.0)), Ks(Vector3f(1, 1, 1)), alpha(1.0), texid(0)
+  {
+    S = Kd.norm() + Ks.norm();
+    Pd = Kd.norm() / S;
+    Pr = Ks.norm() / S;
+  }
+
   Material(const Vector3f d, const Vector3f s, const float a)
-    : Kd(d), Ks(s), alpha(a), texid(0) {}
-  Material(Material& o) { Kd = o.Kd;  Ks = o.Ks;  alpha = o.alpha;  texid = o.texid; }
+    : Kd(d), Ks(s), alpha(a), texid(0)
+  {
+    S = Kd.norm() + Ks.norm();
+    Pd = Kd.norm() / S;
+    Pr = Ks.norm() / S;
+  }
+  Material(Material& o)
+  {
+    Kd = o.Kd;  Ks = o.Ks;  alpha = o.alpha;  texid = o.texid;
+
+    S = Kd.norm() + Ks.norm();
+    Pd = Kd.norm() / S;
+    Pr = Ks.norm() / S;
+  }
 
   void setTexture(const std::string path);
   //virtual void apply(const unsigned int program);
 
-  Vector3f SampleBrdf(Vector3f N);
-  float PdfBrdf(Vector3f N, Vector3f Wi);
-  Vector3f EvalScattering(Vector3f N, Vector3f Wi);
+  Vector3f SampleBrdf(Vector3f Wo, Vector3f N);
+  float PdfBrdf(Vector3f Wo, Vector3f N, Vector3f Wi);
+  Color EvalScattering(Vector3f Wo, Vector3f N, Vector3f Wi);
+
+  bool CharacteristicX(float val);
+  Color F(float d);
+  float D(Vector3f m, Vector3f N);
+  float G(Vector3f Wi, Vector3f Wo, Vector3f m, Vector3f N);
+  float G1(Vector3f v, Vector3f m, Vector3f N);
 };
 
 ////////////////////////////////////////////////////////////////////////
@@ -90,7 +115,7 @@ class Light : public Material
 {
 public:
 
-  Light(const Vector3f e) : Material() { Kd = e; }
+  Light(const Vector3f e) : Material() { Kd = e; Ks = e; }
   virtual bool isLight() { return true; }
   //virtual void apply(const unsigned int program);
 };
@@ -295,6 +320,7 @@ public:
 
   RayTrace();
   Color trace(Ray& ray, KdBVH<float, 3, Shape*>& tree);
+  Intersection CastRay(Ray& ray, KdBVH<float, 3, Shape*>& tree);
 
   Intersection SampleLight();
   float PdfLight(Intersection& Q);

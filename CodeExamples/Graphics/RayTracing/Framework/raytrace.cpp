@@ -29,6 +29,85 @@ std::uniform_real_distribution<> myrandom(0.0, 1.0);
 // Call myrandom(RNGen) to get a uniformly distributed random number in [0,1].
 
 #define MINPEN 0.0001f
+#define ag 0.1
+#define ap 2000
+
+#define PHONG
+//#define GGX
+
+bool Material::CharacteristicX(float val)
+{
+  return val > 0.0f;
+}
+
+Color Material::F(float d)
+{
+  Color Ks = this->Ks;
+  return Ks + (1.0f - Ks) * pow(1.0f - d, 5);
+}
+
+float Material::D(Vector3f m, Vector3f N)
+{
+  const float mdotN = m.dot(N);
+  if (!CharacteristicX(mdotN)) return 0.0f;
+
+  //phong
+#ifdef PHONG
+  float val = (ap + 2.0) / (2.0 * PI);
+  return val * pow(mdotN, ap);
+#endif // PHONG
+
+
+  //ggx
+#ifdef GGX
+  const float tanm = std::sqrt(1.0f - std::pow(mdotN, 2)) / mdotN;
+
+  float ag2 = ag * ag;
+  const float ldenom = PI * std::pow(N.dot(m), 4);
+  const float rdenom = std::pow(ag2 + tanm * tanm, 2);
+
+  return ag2 / (ldenom * rdenom);
+#endif // GGX
+
+}
+
+float Material::G(Vector3f Wi, Vector3f Wo, Vector3f m, Vector3f N)
+{
+  return G1(Wi, m, N) * G1(Wo, m, N);
+}
+
+float Material::G1(Vector3f v, Vector3f m, Vector3f N)
+{
+  const float vDotN = v.dot(N);
+  if (vDotN > 1.0f) return 1.0f;
+
+  if (!CharacteristicX(v.dot(m) / vDotN)) return 0.0f;
+
+  const float tanv = std::sqrt(1.0f - (vDotN * vDotN)) / vDotN;
+  if (tanv == 0.0f) return 1.0f;
+
+  //phong
+#ifdef PHONG
+  float a = sqrt((ap / 2.0) + 1.0) / tanv;
+  if (a < 1.6)
+  {
+    float num = 3.535 * a + (2.181 * a * a);
+    float denom = 1.0 + 2.276 * a + (2.577 * a * a);
+    return num / denom;
+  }
+
+  return 1.0f;
+#endif // PHONG
+
+
+  //ggx
+#ifdef GGX
+  float ag2 = ag * ag;
+  return 2.f / (1 + std::sqrt(1 + ag2 * tanv * tanv));
+#endif // GGX
+
+}
+
 
 float GeometryFactor(Intersection& A, Intersection& B)
 {
@@ -65,25 +144,81 @@ Intersection SampleSphere(Vector3f C, float R, Shape* sphere)
   return record;
 }
 
-Vector3f Material::SampleBrdf(Vector3f N)
+Vector3f Material::SampleBrdf(Vector3f Wo, Vector3f N)
 {
+  float choose = myrandom(RNGen);
   float rand1 = myrandom(RNGen);
   float rand2 = myrandom(RNGen);
-  return SampleLobe(N, sqrt(rand1), 2.0 * PI * rand2);
+
+  //diffuse
+  if (choose < Pd)
+  {
+    return SampleLobe(N, sqrt(rand1), 2.0 * PI * rand2);
+  }
+
+  //reflection
+  float cosm;
+
+  //ggx
+#ifdef GGX
+  float num = ag * std::sqrt(rand1);
+  float denom = std::sqrt(1.0 - rand1);
+  cosm = cos(atan(num / denom));
+#endif // GGX
+
+
+  //phong
+#ifdef PHONG
+  cosm = pow(rand1, 1.0 / (ap + 1.0));
+#endif // PHONG
+
+  Vector3f m = SampleLobe(N, cosm, 2.0 * PI * rand2);
+  return (2.0 * Wo.dot(m) * m) - Wo;
 }
 
-float Material::PdfBrdf(Vector3f N, Vector3f Wi)
+float Material::PdfBrdf(Vector3f Wo, Vector3f N, Vector3f Wi)
 {
-  float val = N.dot(Wi);
-  val = std::abs(val);
-  return val / PI;
+  //float val = N.dot(Wi);
+  //val = std::abs(val);
+  //return val / PI;
+
+  // // //
+  float pd = abs(Wi.dot(N)) / PI;
+
+  Vector3f m = (Wo + Wi).normalized();
+
+  if (m == Vector3f::Zero())
+  {
+    return 0.0f;
+  }
+
+  float pr = D(m, N) * abs(m.dot(N));
+  pr *= 1.0 / (4.0 * abs(Wi.dot(m)));
+
+  return (pd * Pd) + (pr * Pr);
 }
 
-Vector3f Material::EvalScattering(Vector3f N, Vector3f Wi)
+Color Material::EvalScattering(Vector3f Wo, Vector3f N, Vector3f Wi)
 {
-  float val = N.dot(Wi);
-  val = std::abs(val);
-  return val * Kd / PI;
+  //float val = N.dot(Wi);
+  //val = std::abs(val);
+  //return val * Kd / PI;
+
+  // // //
+  Color Ed = Kd / PI;
+
+  Vector3f m = (Wi + Wo).normalized();
+
+  float WidotN = std::abs(Wi.dot(N));
+  float WodotN = std::abs(Wo.dot(N));
+
+  float d = D(m, N);
+  float g = G(Wi, Wo, m, N);
+  Color f = F(abs(Wi.dot(m)));
+
+  Color Er = (f * g * d) / (4 * WidotN * WodotN);
+
+  return WidotN * (Ed + Er);
 }
 
 Intersection RayTrace::SampleLight()
@@ -311,6 +446,9 @@ void Scene::Command(const std::vector<std::string>& strings,
   }
 }
 
+int fCount = 0;
+int CCount = 0;
+
 void Scene::TraceImage(Color* image)
 {
 #ifdef REAL
@@ -325,8 +463,6 @@ void Scene::TraceImage(Color* image)
 #pragma omp parallel for schedule(dynamic, 1) // Magic: Multi-thread y loop
   for (int y = 0; y < height; y++)
   {
-    //fprintf(stderr, "Rendering %4d\r", y);
-
     for (int x = 0; x < width; x++)
     {
       float dx = (2.0f * (x + myrandom(RNGen)) / width) - 1.0f;
@@ -336,11 +472,20 @@ void Scene::TraceImage(Color* image)
       dir.normalize();
       Ray ray(raytrace->eye, dir);
 
-      image[y * width + x] += raytrace->trace(ray, Tree);
+      Color C;
+      Vector3f c;
+
+      C = raytrace->trace(ray, Tree);
+      c = C;
+
+      if (isnan(C.x()) || isnan(C.y()) || isnan(C.z()) || c.norm() > sqrt(75))
+      {
+        continue;
+      }
+
+      image[y * width + x] += C * 2.0f;
     }
   }
-
-  //fprintf(stderr, "\n");
 #endif
 }
 
@@ -404,16 +549,19 @@ void RayTrace::triangleMesh(MeshData* meshdata)
 RayTrace::RayTrace()
 {}
 
-Color RayTrace::trace(Ray& ray, KdBVH<float, 3, Shape*>& tree)
+Intersection RayTrace::CastRay(Ray& ray, KdBVH<float, 3, Shape*>& tree)
 {
   Minimizer mini(ray);
+  BVMinimize(tree, mini);
+  return mini.record;
+}
 
+Color RayTrace::trace(Ray& ray, KdBVH<float, 3, Shape*>& tree)
+{
   Color C = Color(0.0f, 0.0f, 0.0f);
   Color W = Color(1.0f, 1.0f, 1.0f);
 
-  BVMinimize(tree, mini);
-
-  Intersection P = mini.record;
+  Intersection P = CastRay(ray, tree);
   Vector3f N = P.N;
 
   if (P.object == nullptr)
@@ -426,47 +574,51 @@ Color RayTrace::trace(Ray& ray, KdBVH<float, 3, Shape*>& tree)
     return EvalRadiance(P);
   }
 
+  Vector3f Wo = -ray.D;
+
   float RussianRoulette = 0.8f;
   while (myrandom(RNGen) <= RussianRoulette)
   {
     Vector3f Wi;
     float p;
 
+    //Explict Light Connection
+    ////////////////////////////////////////////////////////
     Intersection L = SampleLight();
     p = PdfLight(L) / GeometryFactor(P, L);
     Wi = L.P - P.P;
     Wi.normalize();
 
-    mini.Reset(P.P, Wi);
-    BVMinimize(tree, mini);
-    Intersection I = mini.record;
+    Intersection I = CastRay(Ray(P.P, Wi), tree);
 
     if (p > 0.000001f && I.object && I.object == L.object)
     {
-      Color f = P.object->mat->EvalScattering(N, Wi);
+      Color f = P.object->mat->EvalScattering(Wo, N, Wi);
       C += 0.5f * W * (f / p) * EvalRadiance(L);
     }
 
     ////////////////////////////////////////////////////////
-    N = P.N;
-    Wi = P.object->mat->SampleBrdf(N).normalized();
 
-    mini.Reset(P.P, Wi);
-    BVMinimize(tree, mini);
-    Intersection Q = mini.record;
+    //Implict Light Connection
+    N = P.N;
+    Wi = P.object->mat->SampleBrdf(Wo, N).normalized();
+
+    Intersection Q = CastRay(Ray(P.P, Wi), tree);
 
     if (!Q.object)
     {
       break;
     }
 
-    Color f = P.object->mat->EvalScattering(N, Wi);
-    p = Q.object->mat->PdfBrdf(N, Wi) * RussianRoulette;
+    Color f = P.object->mat->EvalScattering(Wo, N, Wi);
+    p = Q.object->mat->PdfBrdf(Wo, N, Wi);
 
-    if (p < 0.000001f)
+    if (p < 0.000001)
     {
       break;
     }
+
+    p *= RussianRoulette;
 
     W *= (f / p);
 
@@ -478,9 +630,10 @@ Color RayTrace::trace(Ray& ray, KdBVH<float, 3, Shape*>& tree)
     }
 
     P = Q;
+    Wo = -Wi;
   }
 
-  return C * 2.0f;
+  return C;
 }
 
 bool Sphere::intersect(const Ray& ray, Intersection& intersect)
