@@ -17,48 +17,56 @@ const float Radians = PI / 180.0f;    // Convert degrees to radians
 class Material
 {
 public:
-  Vector3f Kd, Ks;
-  float alpha;
-  float Pd, Pr, S;
+  Vector3f Kd, Ks, Kt;
+  float alpha, IOR;
   unsigned int texid;
 
-  virtual bool isLight() { return false; }
+  float pd;
+  float pr;
+  float pt;
+  bool light;
 
-  Material() : Kd(Vector3f(1.0, 0.5, 0.0)), Ks(Vector3f(1, 1, 1)), alpha(1.0), texid(0)
+  bool isLight() { return light; }
+
+  Material() : Kd(Vector3f(1.0, 0.5, 0.0)), Ks(Vector3f(1, 1, 1)), alpha(1.0), texid(0), Kt(), IOR(1.0f)
   {
-    S = Kd.norm() + Ks.norm();
-    Pd = Kd.norm() / S;
-    Pr = Ks.norm() / S;
+    float S = Kd.norm() + Ks.norm() + Kt.norm();
+    pd = Kd.norm() / S;
+    pr = Ks.norm() / S;
+    pt = Kt.norm() / S;
+    light = false;
   }
-
   Material(const Vector3f d, const Vector3f s, const float a)
-    : Kd(d), Ks(s), alpha(a), texid(0)
+    : Kd(d), Ks(s), alpha(a), texid(0), Kt(), IOR(1.0f)
   {
-    S = Kd.norm() + Ks.norm();
-    Pd = Kd.norm() / S;
-    Pr = Ks.norm() / S;
+    float S = Kd.norm() + Ks.norm() + Kt.norm();
+    pd = Kd.norm() / S;
+    pr = Ks.norm() / S;
+    pt = Kt.norm() / S;
+    light = false;
   }
+
   Material(Material& o)
   {
-    Kd = o.Kd;  Ks = o.Ks;  alpha = o.alpha;  texid = o.texid;
-
-    S = Kd.norm() + Ks.norm();
-    Pd = Kd.norm() / S;
-    Pr = Ks.norm() / S;
+    Kd = o.Kd;  Ks = o.Ks;  Kt = o.Kt; IOR = o.IOR; alpha = o.alpha;  texid = o.texid;
+    float S = Kd.norm() + Ks.norm() + Kt.norm();
+    pd = Kd.norm() / S;
+    pr = Ks.norm() / S;
+    pt = Kt.norm() / S;
+    light = o.light;
+  }
+  Material(const Vector3f d, const Vector3f s, const float a, const Vector3f t, const float Ior)
+    : Kd(d), Ks(s), alpha(a), texid(0), Kt(t), IOR(Ior)
+  {
+    float S = Kd.norm() + Ks.norm() + Kt.norm();
+    pd = Kd.norm() / S;
+    pr = Ks.norm() / S;
+    pt = Kt.norm() / S;
+    light = false;
   }
 
   void setTexture(const std::string path);
   //virtual void apply(const unsigned int program);
-
-  Vector3f SampleBrdf(Vector3f Wo, Vector3f N);
-  float PdfBrdf(Vector3f Wo, Vector3f N, Vector3f Wi);
-  Color EvalScattering(Vector3f Wo, Vector3f N, Vector3f Wi);
-
-  bool CharacteristicX(float val);
-  Color F(float d);
-  float D(Vector3f m, Vector3f N);
-  float G(Vector3f Wi, Vector3f Wo, Vector3f m, Vector3f N);
-  float G1(Vector3f v, Vector3f m, Vector3f N);
 };
 
 ////////////////////////////////////////////////////////////////////////
@@ -115,8 +123,7 @@ class Light : public Material
 {
 public:
 
-  Light(const Vector3f e) : Material() { Kd = e; Ks = e; }
-  virtual bool isLight() { return true; }
+  Light(const Vector3f e) : Material() { Kd = e; light = true; }
   //virtual void apply(const unsigned int program);
 };
 
@@ -262,10 +269,13 @@ public:
   }
 };
 
+class Mesh;
+
 class Triangle : public Shape
 {
 public:
   Vector3f V0, V1, V2, N0, N1, N2;
+  Mesh* mesh;
 
   Triangle(Vector3f v0, Vector3f v1, Vector3f v2, Vector3f n0, Vector3f n1, Vector3f n2, Material* m)
     : V0(v0), V1(v1), V2(v2), N0(n0), N1(n1), N2(n2)
@@ -291,6 +301,19 @@ public:
   }
 };
 
+class Mesh : public Shape
+{
+public:
+
+  Mesh(Material* m) : triangles(), area()
+  {
+    mat = m;
+  }
+
+  std::vector<Triangle*> triangles;
+  float area;
+};
+
 class RayTrace
 {
 public:
@@ -299,6 +322,7 @@ public:
   Quaternionf orient;   // Represents rotation of -Z to view direction
   float ry;
   float rx;
+  float D, W;
 
   int width, height;
 
@@ -306,12 +330,18 @@ public:
   std::vector<Shape*> lights;
 
   void setScreen(const int _width, const int _height) { width = _width;  height = _height; }
-  void setCamera(const Vector3f& _eye, const Quaternionf& _o, const float _ry)
+  void setCamera(const Vector3f& _eye, const Quaternionf& _o, const float _ry, float w)
   {
     eye = _eye; orient = _o; ry = _ry;
     rx = ry * width / height;
+    W = w;
+    D = 10.0f;
   }
   void setAmbient(const Vector3f& _a) { ambient = _a; }
+  void setDOF(const Vector3f& pos)
+  {
+    D = (pos - eye).norm();
+  }
 
   void sphere(const Vector3f center, const float r, Material* mat);
   void box(const Vector3f base, const Vector3f diag, Material* mat);
@@ -320,7 +350,7 @@ public:
 
   RayTrace();
   Color trace(Ray& ray, KdBVH<float, 3, Shape*>& tree);
-  Intersection CastRay(Ray& ray, KdBVH<float, 3, Shape*>& tree);
+  Intersection TraceRay(Ray& ray, KdBVH<float, 3, Shape*>& tree);
 
   Intersection SampleLight();
   float PdfLight(Intersection& Q);

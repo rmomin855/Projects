@@ -64,17 +64,17 @@ void ReadScene(const std::string inName, Scene* scene)
 
 // Write the image as a HDR(RGBE) image.  
 #include "rgbe.h"
-void WriteHdrImage(const std::string outName, const int width, const int height, Color* image, float passes = 1.0f)
+void WriteHdrImage(const std::string outName, const int width, const int height, Color* image, int passes)
 {
   // Turn image from a 2D-bottom-up array of Vector3D to an top-down-array of floats
   float* data = new float[width * height * 3];
   float* dp = data;
   for (int y = height - 1; y >= 0; --y) {
     for (int x = 0; x < width; ++x) {
-      Color pixel = image[y * width + x] / passes;
-      *dp++ = pixel[0];
-      *dp++ = pixel[1];
-      *dp++ = pixel[2];
+      Color pixel = image[y * width + x];
+      *dp++ = pixel[0] / passes;
+      *dp++ = pixel[1] / passes;
+      *dp++ = pixel[2] / passes;
     }
   }
 
@@ -96,8 +96,6 @@ void WriteHdrImage(const std::string outName, const int width, const int height,
   delete data;
 }
 
-extern int fCount;
-extern int CCount;
 ////////////////////////////////////////////////////////////////////////
 int main(int argc, char** argv)
 {
@@ -127,19 +125,16 @@ int main(int argc, char** argv)
     // RayTrace the image
     scene->TraceImage(image);
 
-    if (pass == 8 || pass == 64 || pass == 128 || pass == 256 || pass == 512 || pass == 1024 || pass == 2048 || pass == 4096)
+    if (pass == 1 || pass == 8 || pass == 64 || pass == 128 || pass == 256 || pass == 512 || pass == 1024 || pass == 2048 || pass == 4096)
     {
       // Write the image
       std::string outfile = inName;
       outfile.replace(outfile.size() - 4, outfile.size(), std::to_string(pass));
       outfile += ".hdr";
 
-      WriteHdrImage(outfile, scene->width, scene->height, image, float(pass));
+      WriteHdrImage(outfile, scene->width, scene->height, image, pass);
     }
   }
 
   fprintf(stderr, "\n");
-
-  std::cout << "Paths Corrupted: " << CCount << std::endl;
-  std::cout << "f Corrupted: " << fCount << std::endl;
 }

@@ -23,112 +23,123 @@
 
 // A good quality *thread-safe* Mersenne Twister random number generator.
 #include <random>
-std::random_device device;
-std::mt19937_64 RNGen(device());
+//std::random_device device;
+//std::mt19937_64 RNGen(device());
+std::mt19937_64 RNGen;
 std::uniform_real_distribution<> myrandom(0.0, 1.0);
 // Call myrandom(RNGen) to get a uniformly distributed random number in [0,1].
 
 #define MINPEN 0.0001f
-#define ag 0.1
-#define ap 2000
 
-#define PHONG
-//#define GGX
+#define ag 0.1f
+#define ap 10000
+#define ab 0.001f
 
-bool Material::CharacteristicX(float val)
+float sign(float r)
 {
-  return val > 0.0f;
+  return (r >= 0) ? 1 : -1;
 }
 
-Color Material::F(float d)
+bool IsCorrupt(float val)
 {
-  Color Ks = this->Ks;
-  return Ks + (1.0f - Ks) * pow(1.0f - d, 5);
+  return isnan(val) || isinf(val);
 }
 
-float Material::D(Vector3f m, Vector3f N)
+bool IsCorrupt(Vector3f vec)
 {
-  const float mdotN = m.dot(N);
-  if (!CharacteristicX(mdotN)) return 0.0f;
-
-  //phong
-#ifdef PHONG
-  float val = (ap + 2.0) / (2.0 * PI);
-  return val * pow(mdotN, ap);
-#endif // PHONG
-
-
-  //ggx
-#ifdef GGX
-  const float tanm = std::sqrt(1.0f - std::pow(mdotN, 2)) / mdotN;
-
-  float ag2 = ag * ag;
-  const float ldenom = PI * std::pow(N.dot(m), 4);
-  const float rdenom = std::pow(ag2 + tanm * tanm, 2);
-
-  return ag2 / (ldenom * rdenom);
-#endif // GGX
-
+  return IsCorrupt(vec.x()) || IsCorrupt(vec.y()) || IsCorrupt(vec.z());
 }
 
-float Material::G(Vector3f Wi, Vector3f Wo, Vector3f m, Vector3f N)
+float ChiX(float d)
 {
-  return G1(Wi, m, N) * G1(Wo, m, N);
+  return d > 0.0f ? 1.0f : 0.0f;
 }
 
-float Material::G1(Vector3f v, Vector3f m, Vector3f N)
+Color A(const Vector3f& Wo, Intersection& i)
 {
-  const float vDotN = v.dot(N);
-  if (vDotN > 1.0f) return 1.0f;
-
-  if (!CharacteristicX(v.dot(m) / vDotN)) return 0.0f;
-
-  const float tanv = std::sqrt(1.0f - (vDotN * vDotN)) / vDotN;
-  if (tanv == 0.0f) return 1.0f;
-
-  //phong
-#ifdef PHONG
-  float a = sqrt((ap / 2.0) + 1.0) / tanv;
-  if (a < 1.6)
+  if (Wo.dot(i.N) < 0.0f)
   {
-    float num = 3.535 * a + (2.181 * a * a);
-    float denom = 1.0 + 2.276 * a + (2.577 * a * a);
-    return num / denom;
+    float r = exp(i.t * log(i.object->mat->Kt.x()));
+    float g = exp(i.t * log(i.object->mat->Kt.y()));
+    float b = exp(i.t * log(i.object->mat->Kt.z()));
+    return Color(r, g, b);
   }
 
-  return 1.0f;
-#endif // PHONG
-
-
-  //ggx
-#ifdef GGX
-  float ag2 = ag * ag;
-  return 2.f / (1 + std::sqrt(1 + ag2 * tanv * tanv));
-#endif // GGX
-
+  return Color(1.0f, 1.0f, 1.0f);
 }
 
+Color F(float LdotH, Intersection& i)
+{
+  Color Ks = i.object->mat->Ks;
+  return Ks + (1.0f - Ks) * pow((1.0f - abs(LdotH)), 5);;
+}
 
-float GeometryFactor(Intersection& A, Intersection& B)
+float D(Vector3f m, Intersection& i)
+{
+  if (!ChiX(m.dot(i.N)))
+  {
+    return 0.0f;
+  }
+
+  float num = ap + 2.0f;
+  float denom = 2.0f * PI;
+
+  return (num / denom) * pow(m.dot(i.N), ap);
+}
+
+float G1(Vector3f v, Vector3f m, Intersection& i)
+{
+  float VN = v.dot(i.N);
+  float VM = v.dot(m);
+
+  if (!ChiX(VM / VN))
+  {
+    return 0.0f;
+  }
+
+  float tanv = sqrt(1.0f - (VN * VN)) / VN;
+
+  if (VN > 1.0f)
+  {
+    return 1.0f;
+  }
+
+  if (!tanv)
+  {
+    return 1.0f;
+  }
+
+  float a = sqrt((ap / 2.0f) + 1.0f) / tanv;
+
+  float num = 3.535f * a + 2.181f * a * a;
+  float denom = 1.0f + 2.276f * a + 2.577f * a * a;
+  return num / denom;
+}
+
+float G(const Vector3f& Wo, const Vector3f& m, const Vector3f& Wi, Intersection& i)
+{
+  return G1(Wi, m, i) * G1(Wo, m, i);
+}
+
+float GeometryFactor(Intersection A, Intersection B)
 {
   Vector3f D = A.P - B.P;
+  float DD = D.dot(D);
+  float AD = A.N.dot(D);
+  float BD = B.N.dot(D);
 
-  float val = A.N.dot(D) * B.N.dot(D);
-  val /= (D.dot(D) * D.dot(D));
-
-  val = std::abs(val);
-  return val;
+  return abs((AD * BD) / (DD * DD));
 }
 
 Vector3f SampleLobe(Vector3f N, float c, float phi)
 {
-  float s = sqrt(1.0f - (c * c));
-  Vector3f K = Vector3f(s * cosf(phi), s * sin(phi), c);
-  Quaternionf q = Quaternionf::FromTwoVectors(Vector3f::UnitZ(), N);
-  return q._transformVector(K);
+  float s1 = sqrt(1 - c * c);
+  Vector3f K(s1 * cos(phi), s1 * sin(phi), c); // Vector centered around Z-axis
+  Quaternionf q = Quaternionf::FromTwoVectors(Vector3f::UnitZ(), N); // q rotates Z to N
+  return q._transformVector(K); // K rotated to N's frame
 }
 
-Intersection SampleSphere(Vector3f C, float R, Shape* sphere)
+Intersection SampleSphere(Vector3f C, float R, Shape* shape)
 {
   float rand1 = myrandom(RNGen);
   float rand2 = myrandom(RNGen);
@@ -140,106 +151,271 @@ Intersection SampleSphere(Vector3f C, float R, Shape* sphere)
   Intersection record;
   record.N = Vector3f(r * cos(a), r * sin(a), z).normalized();
   record.P = C + (R * record.N);
-  record.object = sphere;
+  record.object = shape;
   return record;
 }
 
-Vector3f Material::SampleBrdf(Vector3f Wo, Vector3f N)
+Vector3f SampleBrdf(Vector3f Wo, Intersection& i)
 {
-  float choose = myrandom(RNGen);
   float rand1 = myrandom(RNGen);
   float rand2 = myrandom(RNGen);
 
-  //diffuse
-  if (choose < Pd)
+  float pd = i.object->mat->pd;
+  float pr = i.object->mat->pr;
+  float pt = i.object->mat->pt;
+
+  float cosTheataM = pow(rand1, 1.0f / (ap + 1.0f));
+  Vector3f m = SampleLobe(i.N, cosTheataM, 2.0f * PI * rand2);
+
+  if (rand1 < pd)
   {
-    return SampleLobe(N, sqrt(rand1), 2.0 * PI * rand2);
+    return SampleLobe(i.N, sqrt(rand1), 2.0f * rand2 * PI);
+  }
+  else if (rand1 < (pd + pr))
+  {
+    return 2.0f * abs(Wo.dot(m)) * m - Wo;
   }
 
-  //reflection
-  float cosm;
+  // transmission prob
+  float ni = 1.0f, no = 1.0f;
 
-  //ggx
-#ifdef GGX
-  float num = ag * std::sqrt(rand1);
-  float denom = std::sqrt(1.0 - rand1);
-  cosm = cos(atan(num / denom));
-#endif // GGX
+  if (Wo.dot(i.N) > 0.0f)
+  {
+    no = i.object->mat->IOR;
+  }
+  else
+  {
+    ni = i.object->mat->IOR;
+  }
 
+  float n = ni / no;
 
-  //phong
-#ifdef PHONG
-  cosm = pow(rand1, 1.0 / (ap + 1.0));
-#endif // PHONG
+  // test radiance
+  float r = 1.0f - (n * n) * (1.0f - (Wo.dot(m) * Wo.dot(m)));
 
-  Vector3f m = SampleLobe(N, cosm, 2.0 * PI * rand2);
-  return (2.0 * Wo.dot(m) * m) - Wo;
+  if (r < 0.0f)
+  {
+    return 2.0f * abs(Wo.dot(m)) * m - Wo;
+  }
+
+  return (n * Wo.dot(m) - sign(Wo.dot(i.N)) * sqrt(r)) * m - (n * Wo);
 }
 
-float Material::PdfBrdf(Vector3f Wo, Vector3f N, Vector3f Wi)
+float PdfBrdf(Vector3f Wo, Vector3f Wi, Intersection& i)
 {
-  //float val = N.dot(Wi);
-  //val = std::abs(val);
-  //return val / PI;
+  float pd = i.object->mat->pd;
+  float pr = i.object->mat->pr;
+  float pt = i.object->mat->pt;
 
-  // // //
-  float pd = abs(Wi.dot(N)) / PI;
+  float Pd = std::abs(Wi.dot(i.N)) / PI;
 
+  if (!pr && !pt)
+  {
+    return pd * Pd;
+  }
+
+  // specular reflection prob
   Vector3f m = (Wo + Wi).normalized();
+  float end = (1.0f / (4.0f * std::abs(Wi.dot(m))));
+  float Pr = D(m, i) * std::abs(m.dot(i.N)) * end;
 
-  if (m == Vector3f::Zero())
+  if (!pt)
   {
-    return 0.0f;
+    return pd * Pd + pr * Pr;
   }
 
-  float pr = D(m, N) * abs(m.dot(N));
-  pr *= 1.0 / (4.0 * abs(Wi.dot(m)));
+  // transmission prob
+  float ni = 1.0f, no = 1.0f;
+  if (Wo.dot(i.N) > 0.0f)
+  {
+    no = i.object->mat->IOR;
+  }
+  else
+  {
+    ni = i.object->mat->IOR;
+  }
 
-  return (pd * Pd) + (pr * Pr);
+  float n = ni / no;
+
+  m = -1.0f * (no * Wi + ni * Wo).normalized();
+
+  // test radiance
+  float r = 1.0f - (n * n) * (1.0f - (Wo.dot(m) * Wo.dot(m)));
+
+  float Pt;
+  // total internal reflection
+  if (r < 0.0f)
+  {
+    Pt = Pr;
+  }
+  else
+  {
+    float num = (no * no) * std::abs(Wi.dot(m));
+    float den = (no * Wi.dot(m) + ni * Wo.dot(m));
+
+    float end2 = num / (den * den);
+    Pt = D(m, i) * std::abs(m.dot(i.N)) * end2;
+  }
+
+  return pd * Pd + pr * Pr + pt * Pt;
 }
 
-Color Material::EvalScattering(Vector3f Wo, Vector3f N, Vector3f Wi)
+Color EvalScattering(Vector3f Wo, Intersection i, Vector3f Wi)
 {
-  //float val = N.dot(Wi);
-  //val = std::abs(val);
-  //return val * Kd / PI;
+  float pd = i.object->mat->pd;
+  float pr = i.object->mat->pr;
+  float pt = i.object->mat->pt;
 
-  // // //
-  Color Ed = Kd / PI;
+  // diffuse term
+  Color Ed = Color(i.object->mat->Kd) / PI;
+  float LdotN = std::abs(Wi.dot(i.N));
 
+  if (!pr && !pt)
+  {
+    return LdotN * Ed;
+  }
+
+  // specular term
   Vector3f m = (Wi + Wo).normalized();
 
-  float WidotN = std::abs(Wi.dot(N));
-  float WodotN = std::abs(Wo.dot(N));
+  Color f = F(Wi.dot(m), i);
+  float g = G(Wo, m, Wi, i);
+  float d = D(m, i);
+  float VdotN = std::abs(Wo.dot(i.N));
 
-  float d = D(m, N);
-  float g = G(Wi, Wo, m, N);
-  Color f = F(abs(Wi.dot(m)));
+  Color Er = (f * g * d) / (4.0f * LdotN * VdotN);
 
-  Color Er = (f * g * d) / (4 * WidotN * WodotN);
+  if (!pt)
+  {
+    return LdotN * (Ed + Er);
+  }
 
-  return WidotN * (Ed + Er);
+  // transmission term
+  float ni = 1.0f, no = 1.0f;
+  if (Wo.dot(i.N) > 0.0f)
+  {
+    no = i.object->mat->IOR;
+  }
+  else
+  {
+    ni = i.object->mat->IOR;
+  }
+
+  float n = ni / no;
+
+  m = -1.0f * (no * Wi + ni * Wo).normalized();
+
+  // test radiance
+  float r = 1.0f - (n * n) * (1.0f - (Wo.dot(m) * Wo.dot(m)));
+
+  Color Et;
+
+  // total internal reflection
+  if (r < 0.0f)
+  {
+    Et = A(Wo, i) * Er;
+  }
+  else
+  {
+    f = 1.0f - F(Wi.dot(m), i);
+    g = G(Wo, m, Wi, i);
+    d = D(m, i);
+
+    Color left = Color(g * d * f) / (LdotN * VdotN);
+
+    float rightNum = std::abs(Wi.dot(m)) * std::abs(Wo.dot(m)) * no * no;
+    float rightDen = (no * Wi.dot(m) + ni * Wo.dot(m));
+
+    Et = A(Wo, i) * left * (rightNum / (rightDen * rightDen));
+  }
+
+  return LdotN * (Ed + Er + Et);
 }
 
 Intersection RayTrace::SampleLight()
 {
   float rand = myrandom(RNGen);
   size_t index = size_t(rand * lights.size());
+  Intersection inter;
 
   if (rand == 1.0f)
   {
     --index;
   }
 
-  Sphere* light = reinterpret_cast<Sphere*>(lights[index]);
+  if (dynamic_cast<Sphere*>(lights[index]))
+  {
+    Sphere* light = reinterpret_cast<Sphere*>(lights[index]);
 
-  return SampleSphere(light->C, light->r, light);
+    inter = SampleSphere(light->C, light->r, light);
+  }
+  if (dynamic_cast<Mesh*>(lights[index]))
+  {
+    Mesh* mesh = reinterpret_cast<Mesh*>(lights[index]);
+    float rand = myrandom(RNGen);
+    size_t triIndex = size_t(rand * mesh->triangles.size());
+
+    if (rand == 1.0f)
+    {
+      --triIndex;
+    }
+
+    inter.P = mesh->triangles[triIndex]->V0;
+    inter.N = mesh->triangles[triIndex]->N0;
+    inter.object = lights[index];
+  }
+  if (dynamic_cast<Cylinder*>(lights[index]))
+  {
+    Cylinder* cylinder = reinterpret_cast<Cylinder*>(lights[index]);
+
+    inter.object = lights[index];
+    inter.P = cylinder->B;
+    inter.N = cylinder->A.normalized();
+  }
+  if (dynamic_cast<Box*>(lights[index]))
+  {
+    Box* box = reinterpret_cast<Box*>(lights[index]);
+
+    inter.object = lights[index];
+    inter.P = box->base;
+    inter.N = Vector3f(0.0, 0.0f, 1.0f);
+  }
+
+  return inter;
 }
 
 float RayTrace::PdfLight(Intersection& Q)
 {
-  Sphere* sphere = reinterpret_cast<Sphere*>(Q.object);
-  float area = 4.0f * PI * sphere->r * sphere->r;
+  float area = 0.0f;
+
+  if (dynamic_cast<Sphere*>(Q.object))
+  {
+    float r = reinterpret_cast<Sphere*>(Q.object)->r;
+    area = r * r * 4 * PI;
+  }
+  if (dynamic_cast<Mesh*>(Q.object))
+  {
+    area = reinterpret_cast<Mesh*>(Q.object)->area;
+  }
+  if (dynamic_cast<Cylinder*>(Q.object))
+  {
+    Cylinder* cylinder = reinterpret_cast<Cylinder*>(Q.object);
+
+    float r = cylinder->r;
+    float len = cylinder->A.norm();
+
+    area = 2.0 * PI * r * len;
+    area += 2.0f * PI * r * r;
+  }
+  if (dynamic_cast<Box*>(Q.object))
+  {
+    Box* box = reinterpret_cast<Box*>(Q.object);
+
+    area = 2.0f * box->diag.x() * box->diag.y();
+    area += 2.0f * box->diag.x() * box->diag.z();
+    area += 2.0f * box->diag.z() * box->diag.y();
+  }
+
   return 1.0f / (area * lights.size());
 }
 
@@ -324,13 +500,20 @@ void Material::setTexture(const std::string path)
   stbi_image_free(image);
 #endif // REAL
 
-}
+    }
 
 void Scene::Command(const std::vector<std::string>& strings,
   const std::vector<float>& f)
 {
-  if (strings.size() == 0) return;
+  size_t size = strings.size();
+  if (size == 0) return;
   std::string c = strings[0];
+  bool dof = false;
+
+  if (strings[size - 1] == "dof")
+  {
+    dof = true;
+  }
 
   if (c == "screen") {
     // syntax: screen width height
@@ -344,7 +527,7 @@ void Scene::Command(const std::vector<std::string>& strings,
 
     width = int(f[1]);
     height = int(f[2]);
-  }
+}
 
   else if (c == "camera") {
     // syntax: camera x y z   ry   <orientation spec>
@@ -354,7 +537,7 @@ void Scene::Command(const std::vector<std::string>& strings,
 #endif // REAL
 
 #ifndef REAL
-    raytrace->setCamera(Vector3f(f[1], f[2], f[3]), Orientation(5, strings, f), f[4]);
+    raytrace->setCamera(Vector3f(f[1], f[2], f[3]), Orientation(5, strings, f), f[4], f[10]);
 #endif // !REAL
   }
 
@@ -378,7 +561,14 @@ void Scene::Command(const std::vector<std::string>& strings,
     // First rgb is Diffuse reflection, second is specular reflection.
     // third is beer's law transmission followed by index of refraction.
     // Creates a Material instance to be picked up by successive shapes
-    currentMat = new Material(Vector3f(f[1], f[2], f[3]), Vector3f(f[4], f[5], f[6]), f[7]);
+    if (f.size() < 8)
+    {
+      currentMat = new Material(Vector3f(f[1], f[2], f[3]), Vector3f(f[4], f[5], f[6]), f[7]);
+    }
+    else
+    {
+      currentMat = new Material(Vector3f(f[1], f[2], f[3]), Vector3f(f[4], f[5], f[6]), f[7], Vector3f(f[8], f[9], f[10]), f[11]);
+    }
   }
 
   else if (c == "light") {
@@ -398,6 +588,11 @@ void Scene::Command(const std::vector<std::string>& strings,
 #ifndef REAL
     raytrace->sphere(Vector3f(f[1], f[2], f[3]), f[4], currentMat);
 #endif // !REAL
+
+    if (dof)
+    {
+      raytrace->setDOF(Vector3f(f[1], f[2], f[3]));
+    }
   }
 
   else if (c == "box") {
@@ -411,6 +606,10 @@ void Scene::Command(const std::vector<std::string>& strings,
     raytrace->box(Vector3f(f[1], f[2], f[3]), Vector3f(f[4], f[5], f[6]), currentMat);
 #endif // !REAL
 
+    if (dof)
+    {
+      raytrace->setDOF((Vector3f(f[1], f[2], f[3]) + Vector3f(f[4], f[5], f[6])) / 2.0f);
+    }
   }
 
   else if (c == "cylinder") {
@@ -423,6 +622,11 @@ void Scene::Command(const std::vector<std::string>& strings,
 #ifndef REAL
     raytrace->cylinder(Vector3f(f[1], f[2], f[3]), Vector3f(f[4], f[5], f[6]), f[7], currentMat);
 #endif // !REAL
+
+    if (dof)
+    {
+      raytrace->setDOF(Vector3f(f[1], f[2], f[3]));
+    }
   }
 
 
@@ -436,6 +640,11 @@ void Scene::Command(const std::vector<std::string>& strings,
       * scale(Vector3f(f[5], f[5], f[5]))
       * toMat4(Orientation(6, strings, f));
     ReadAssimpFile(strings[1], modelTr);
+
+    if (dof)
+    {
+      raytrace->setDOF(Vector3f(f[2], f[3], f[4]));
+    }
   }
 
 
@@ -444,10 +653,7 @@ void Scene::Command(const std::vector<std::string>& strings,
     fprintf(stderr, "* Unknown command: %s\n", c.c_str());
     fprintf(stderr, "*********************************************\n\n");
   }
-}
-
-int fCount = 0;
-int CCount = 0;
+  }
 
 void Scene::TraceImage(Color* image)
 {
@@ -459,33 +665,37 @@ void Scene::TraceImage(Color* image)
   Vector3f X = raytrace->rx * raytrace->orient._transformVector(Vector3f::UnitX());
   Vector3f Y = raytrace->ry * raytrace->orient._transformVector(Vector3f::UnitY());
   Vector3f Z = -1.0f * raytrace->orient._transformVector(Vector3f::UnitZ());
+  float D = raytrace->D;
 
-#pragma omp parallel for schedule(dynamic, 1) // Magic: Multi-thread y loop
+ #pragma omp parallel for schedule(dynamic, 1) // Magic: Multi-thread y loop
   for (int y = 0; y < height; y++)
   {
+    //fprintf(stderr, "Rendering %4d\r", y);
+
     for (int x = 0; x < width; x++)
     {
-      float dx = (2.0f * (x + myrandom(RNGen)) / width) - 1.0f;
-      float dy = (2.0f * (y + myrandom(RNGen)) / height) - 1.0f;
+      float rand1 = myrandom(RNGen);
+      float rand2 = myrandom(RNGen);
 
-      Vector3f dir = dx * X + dy * Y + Z;
+      float dx = (2.0f * (x + rand1) / width) - 1.0f;
+      float dy = (2.0f * (y + rand2) / height) - 1.0f;
+
+      float r = raytrace->W * sqrt(rand1);
+      float theta = 2 * PI * r * rand2;
+      float rx = r * cos(theta);
+      float ry = r * sin(theta);
+
+      Vector3f pos = raytrace->eye + (rx * X) + (ry * Y);
+
+      Vector3f dir = ((D * dx - rx) * X) + ((D * dy - ry) * Y) + (D * Z);
       dir.normalize();
-      Ray ray(raytrace->eye, dir);
 
-      Color C;
-      Vector3f c;
-
-      C = raytrace->trace(ray, Tree);
-      c = C;
-
-      if (isnan(C.x()) || isnan(C.y()) || isnan(C.z()) || c.norm() > sqrt(75))
-      {
-        continue;
-      }
-
-      image[y * width + x] += C * 2.0f;
+      Ray ray(pos, dir);
+      image[y * width + x] += raytrace->trace(ray, Tree);
     }
   }
+
+  //fprintf(stderr, "\n");
 #endif
 }
 
@@ -524,6 +734,8 @@ void RayTrace::cylinder(const Vector3f base, const Vector3f axis, const float ra
 
 void RayTrace::triangleMesh(MeshData* meshdata)
 {
+  Mesh* mesh = new Mesh(meshdata->mat);
+
   size_t size = meshdata->triangles.size();
 
   for (size_t i = 0; i < size; i++)
@@ -534,22 +746,30 @@ void RayTrace::triangleMesh(MeshData* meshdata)
     VertexData v2 = meshdata->vertices[tri[2]];
 
     Triangle* obj = new Triangle(v0.pnt, v1.pnt, v2.pnt, v0.nrm, v1.nrm, v2.nrm, meshdata->mat);
-    shapes.push_back(obj);
+    obj->mesh = mesh;
+    mesh->triangles.push_back(obj);
 
-    if (meshdata->mat->isLight())
-    {
-      lights.push_back(obj);
-    }
+    float a = (v1.pnt - v0.pnt).norm();
+    float b = (v2.pnt - v0.pnt).norm();
+    float c = (v2.pnt - v1.pnt).norm();
+
+    float s = 0.5f * (a + b + c);
+    float area = sqrt(s * (s - a) * (s - b) * (s - c));
+    mesh->area += area;
+
+    shapes.push_back(obj);
   }
 
-  //if (meshdata->mat->isLight())
-  //  lights.push_back(obj);
+  if (meshdata->mat->isLight())
+  {
+    lights.push_back(mesh);
+  }
 }
 
 RayTrace::RayTrace()
 {}
 
-Intersection RayTrace::CastRay(Ray& ray, KdBVH<float, 3, Shape*>& tree)
+Intersection RayTrace::TraceRay(Ray& ray, KdBVH<float, 3, Shape*>& tree)
 {
   Minimizer mini(ray);
   BVMinimize(tree, mini);
@@ -561,7 +781,7 @@ Color RayTrace::trace(Ray& ray, KdBVH<float, 3, Shape*>& tree)
   Color C = Color(0.0f, 0.0f, 0.0f);
   Color W = Color(1.0f, 1.0f, 1.0f);
 
-  Intersection P = CastRay(ray, tree);
+  Intersection P = TraceRay(ray, tree);
   Vector3f N = P.N;
 
   if (P.object == nullptr)
@@ -575,57 +795,69 @@ Color RayTrace::trace(Ray& ray, KdBVH<float, 3, Shape*>& tree)
   }
 
   Vector3f Wo = -ray.D;
-
   float RussianRoulette = 0.8f;
+
   while (myrandom(RNGen) <= RussianRoulette)
   {
     Vector3f Wi;
     float p;
 
-    //Explict Light Connection
-    ////////////////////////////////////////////////////////
     Intersection L = SampleLight();
     p = PdfLight(L) / GeometryFactor(P, L);
     Wi = L.P - P.P;
     Wi.normalize();
 
-    Intersection I = CastRay(Ray(P.P, Wi), tree);
+    float q = PdfBrdf(Wo, Wi, P) * RussianRoulette;
+    float Wmis = (p * p) / (p * p + q * q);
 
-    if (p > 0.000001f && I.object && I.object == L.object)
+    Intersection I = TraceRay(Ray(P.P, Wi), tree);
+
+    if (p > 0.0f && I.object && I.object == L.object)
     {
-      Color f = P.object->mat->EvalScattering(Wo, N, Wi);
-      C += 0.5f * W * (f / p) * EvalRadiance(L);
+      Color f = EvalScattering(Wo, P, Wi);
+
+      Color CorruptCheck = W * Wmis * (f / p) * EvalRadiance(L);
+
+      if (!IsCorrupt(CorruptCheck))
+      {
+        C += CorruptCheck;
+      }
     }
 
     ////////////////////////////////////////////////////////
-
-    //Implict Light Connection
     N = P.N;
-    Wi = P.object->mat->SampleBrdf(Wo, N).normalized();
+    Wi = SampleBrdf(Wo, P).normalized();
 
-    Intersection Q = CastRay(Ray(P.P, Wi), tree);
+    Intersection Q = TraceRay(Ray(P.P, Wi), tree);
 
     if (!Q.object)
     {
       break;
     }
 
-    Color f = P.object->mat->EvalScattering(Wo, N, Wi);
-    p = Q.object->mat->PdfBrdf(Wo, N, Wi);
+    Color f = EvalScattering(Wo, P, Wi);
+    p = PdfBrdf(Wo, Wi, P) * RussianRoulette;
 
-    if (p < 0.000001)
+    if (p < 0.000001f)
     {
       break;
     }
 
-    p *= RussianRoulette;
+    Color CorruptCheck = f / p;
 
-    W *= (f / p);
+    if (IsCorrupt(CorruptCheck))
+    {
+      break;
+    }
+
+    W *= CorruptCheck;
 
     if (Q.object->mat->isLight())
     {
-      C += 0.5f * W * EvalRadiance(Q);
-      //C += W * EvalRadiance(Q);
+      q = PdfLight(Q) / GeometryFactor(P, Q);
+      Wmis = (p * p) / (p * p + q * q);
+
+      C += W * Wmis * EvalRadiance(Q);
       break;
     }
 
@@ -633,46 +865,44 @@ Color RayTrace::trace(Ray& ray, KdBVH<float, 3, Shape*>& tree)
     Wo = -Wi;
   }
 
-  return C;
+  return C * 2.0f;
 }
 
 bool Sphere::intersect(const Ray& ray, Intersection& intersect)
 {
-  Vector3f _Q = ray.Q - C;
+  const Vector3f Q = ray.Q - C;
 
-  float a = ray.D.dot(ray.D);
-  float b = 2.0f * _Q.dot(ray.D);
-  float c = _Q.dot(_Q) - (r * r);
+  const Vector3f D = ray.D;
 
-  float determinant = (b * b) - (4.0f * a * c);
+  const float b = Q.dot(D);
 
-  if (determinant < 0)
+  float disc = (b * b - Q.dot(Q) + r * r);
+
+  if (disc < 0) return false;
+
+  disc = sqrt(disc);
+
+  float t0 = -b + disc;
+  float t1 = -b - disc;
+
+  if (t0 < MINPEN && t1 < MINPEN) return false;
+
+  if (t0 < MINPEN)
   {
-    return false;
+    intersect.t = t1;
+  }
+  else if (t1 < MINPEN)
+  {
+    intersect.t = t0;
+  }
+  else
+  {
+    intersect.t = std::min(t0, t1);
   }
 
-  float sqrtDet = sqrtf(determinant);
-
-  float t1 = (-b + sqrtDet) / (2.0f * a);
-  float t2 = (-b - sqrtDet) / (2.0f * a);
-
-  if (t1 < MINPEN && t2 < MINPEN)
-  {
-    return false;
-  }
-
-  intersect.t = std::fmin(t1, t2);
-
-  if (intersect.t < MINPEN)
-  {
-    intersect.t = std::fmax(t1, t2);
-  }
-
-  intersect.object = this;
   intersect.P = ray.eval(intersect.t);
-  intersect.N = intersect.P - C;
-  intersect.N.normalize();
-
+  intersect.N = (intersect.P - C).normalized();
+  intersect.object = this;
   return true;
 }
 
@@ -713,7 +943,7 @@ bool Triangle::intersect(const Ray& ray, Intersection& intersect)
   }
 
   intersect.t = t;
-  intersect.object = this;
+  intersect.object = mesh;
   intersect.P = ray.eval(t);
   intersect.N = ((1.0f - u - v) * N0) + (u * N1) + (v * N2);
   intersect.N.normalize();
